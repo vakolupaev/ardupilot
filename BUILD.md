@@ -63,6 +63,7 @@ list some basic and more used commands as example.
 
     Here are some commands to configure waf for commonly used boards:
 
+
     ```sh
     ./waf configure --board bebop --static # Bebop or Bebop2
     ./waf configure --board edge           # emlid edge

@@ -55,6 +55,7 @@ public:
     uint16_t mix_output_angle(uint8_t channel, int16_t angle) const;
     uint16_t mix_output_range(uint8_t channel, int16_t value) const;
     int16_t mix_elevon_vtail(int16_t angle1, int16_t angle2, bool first_output) const;
+    int16_t mix_xwing(int16_t roll, int16_t pitch, int16_t yaw, bool top, bool left) const;
     void dsm_bind_step(void);
 
     struct {

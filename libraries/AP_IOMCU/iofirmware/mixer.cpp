@@ -116,6 +116,17 @@ int16_t AP_IOMCU_FW::mix_elevon_vtail(int16_t angle1, int16_t angle2, bool first
 }
 
 /*
+  xwing mixer
+ */
+int16_t AP_IOMCU_FW::mix_xwing(int16_t roll, int16_t pitch, int16_t yaw, bool top, bool left) const
+{
+    int16_t mixed = pitch;
+    mixed += left ? -roll : roll;
+    mixed += (top == left) ? yaw : -yaw;
+    return constrain_int16((mixed * mixing.mixing_gain) / 1000, -ANGLE_SCALE, ANGLE_SCALE);
+}
+
+/*
   run mixer. This is used when FMU is not providing inputs, or when
   the OVERRIDE_CHAN is high. It allows for manual fixed wing flight
  */
@@ -212,6 +223,22 @@ void AP_IOMCU_FW::run_mixer(void)
 
         case SRV_Channel::k_vtail_right:
             pwm = mix_output_angle(i, mix_elevon_vtail(rudder, pitch, true));
+            break;
+
+        case SRV_Channel::k_x_top_left:
+            pwm = mix_output_angle(i, mix_xwing(roll, pitch, rudder, true, true));
+            break;
+
+        case SRV_Channel::k_x_top_right:
+            pwm = mix_output_angle(i, mix_xwing(roll, pitch, rudder, true, false));
+            break;
+
+        case SRV_Channel::k_x_bottom_left:
+            pwm = mix_output_angle(i, mix_xwing(roll, pitch, rudder, false, true));
+            break;
+
+        case SRV_Channel::k_x_bottom_right:
+            pwm = mix_output_angle(i, mix_xwing(roll, pitch, rudder, false, false));
             break;
 
         default:

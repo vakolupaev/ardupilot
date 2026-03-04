@@ -195,6 +195,43 @@ void Plane::channel_function_mixer(SRV_Channel::Function func1_in, SRV_Channel::
     SRV_Channels::set_output_scaled(func2_out, out2);
 }
 
+/*
+  mixer for X-wing channels setup using designated servo function values.
+  This combines roll, pitch and yaw into 4 surfaces:
+    top-left     = pitch - roll + yaw
+    top-right    = pitch + roll - yaw
+    bottom-left  = pitch - roll - yaw
+    bottom-right = pitch + roll + yaw
+ */
+void Plane::xwing_function_mixer(SRV_Channel::Function roll_in, SRV_Channel::Function pitch_in,
+                                 SRV_Channel::Function yaw_in, SRV_Channel::Function top_left_out,
+                                 SRV_Channel::Function top_right_out, SRV_Channel::Function bottom_left_out,
+                                 SRV_Channel::Function bottom_right_out) const
+{
+    float roll = SRV_Channels::get_output_scaled(roll_in);
+    float pitch = SRV_Channels::get_output_scaled(pitch_in);
+    float yaw = SRV_Channels::get_output_scaled(yaw_in);
+
+    // apply MIXING_OFFSET to input channels, matching existing elevon/vtail behaviour
+    if (g.mixing_offset < 0) {
+        pitch *= (100 - g.mixing_offset) * 0.01;
+    } else if (g.mixing_offset > 0) {
+        const float axis_scale = (100 + g.mixing_offset) * 0.01;
+        roll *= axis_scale;
+        yaw *= axis_scale;
+    }
+
+    const float out_top_left = constrain_float((pitch - roll + yaw) * g.mixing_gain, -4500, 4500);
+    const float out_top_right = constrain_float((pitch + roll - yaw) * g.mixing_gain, -4500, 4500);
+    const float out_bottom_left = constrain_float((pitch - roll - yaw) * g.mixing_gain, -4500, 4500);
+    const float out_bottom_right = constrain_float((pitch + roll + yaw) * g.mixing_gain, -4500, 4500);
+
+    SRV_Channels::set_output_scaled(top_left_out, out_top_left);
+    SRV_Channels::set_output_scaled(top_right_out, out_top_right);
+    SRV_Channels::set_output_scaled(bottom_left_out, out_bottom_left);
+    SRV_Channels::set_output_scaled(bottom_right_out, out_bottom_right);
+}
+
 
 /*
   setup flaperon output channels
@@ -994,17 +1031,32 @@ void Plane::landing_neutral_control_surface_servos(void)
 }
 
 /*
-  sets rudder/vtail , and elevon to indicator positions that we are in a rudder arming waiting for neutral stick state
-*/
+  sets rudder/vtail/elevon/xwing to indicator positions that we are in a rudder arming waiting for neutral stick state
+ */
 void Plane::indicate_waiting_for_rud_neutral_to_takeoff(void)
 {
     if (takeoff_state.waiting_for_rudder_neutral)  {
         SRV_Channels::set_output_scaled(SRV_Channel::k_rudder, 0);
         channel_function_mixer(SRV_Channel::k_rudder,  SRV_Channel::k_elevator, SRV_Channel::k_vtail_right, SRV_Channel::k_vtail_left);
-        if (!SRV_Channels::function_assigned(SRV_Channel::k_rudder) && !SRV_Channels::function_assigned(SRV_Channel::k_vtail_left)) {
+        xwing_function_mixer(SRV_Channel::k_aileron, SRV_Channel::k_elevator, SRV_Channel::k_rudder,
+                             SRV_Channel::k_x_top_left, SRV_Channel::k_x_top_right,
+                             SRV_Channel::k_x_bottom_left, SRV_Channel::k_x_bottom_right);
+
+        const bool have_rudder_indication = SRV_Channels::function_assigned(SRV_Channel::k_rudder) ||
+                                            SRV_Channels::function_assigned(SRV_Channel::k_vtail_left) ||
+                                            SRV_Channels::function_assigned(SRV_Channel::k_vtail_right) ||
+                                            SRV_Channels::function_assigned(SRV_Channel::k_x_top_left) ||
+                                            SRV_Channels::function_assigned(SRV_Channel::k_x_top_right) ||
+                                            SRV_Channels::function_assigned(SRV_Channel::k_x_bottom_left) ||
+                                            SRV_Channels::function_assigned(SRV_Channel::k_x_bottom_right);
+        if (!have_rudder_indication) {
             // if no rudder indication possible, neutral elevons during wait because on takeoff stance they are usually both full up
             SRV_Channels::set_output_scaled(SRV_Channel::k_elevon_right, 0);
-            SRV_Channels::set_output_scaled(SRV_Channel::k_elevon_left, 0);        
+            SRV_Channels::set_output_scaled(SRV_Channel::k_elevon_left, 0);
+            SRV_Channels::set_output_scaled(SRV_Channel::k_x_top_left, 0);
+            SRV_Channels::set_output_scaled(SRV_Channel::k_x_top_right, 0);
+            SRV_Channels::set_output_scaled(SRV_Channel::k_x_bottom_left, 0);
+            SRV_Channels::set_output_scaled(SRV_Channel::k_x_bottom_right, 0);
         }
     }
 }
@@ -1023,9 +1075,12 @@ void Plane::servos_output(void)
     // support twin-engine aircraft
     servos_twin_engine_mix();
 
-    // run vtail and elevon mixers
+    // run vtail, elevon and xwing mixers
     channel_function_mixer(SRV_Channel::k_aileron, SRV_Channel::k_elevator, SRV_Channel::k_elevon_left, SRV_Channel::k_elevon_right);
     channel_function_mixer(SRV_Channel::k_rudder,  SRV_Channel::k_elevator, SRV_Channel::k_vtail_right, SRV_Channel::k_vtail_left);
+    xwing_function_mixer(SRV_Channel::k_aileron, SRV_Channel::k_elevator, SRV_Channel::k_rudder,
+                         SRV_Channel::k_x_top_left, SRV_Channel::k_x_top_right,
+                         SRV_Channel::k_x_bottom_left, SRV_Channel::k_x_bottom_right);
 
 #if HAL_QUADPLANE_ENABLED
     // cope with tailsitters and bicopters
@@ -1119,6 +1174,11 @@ void Plane::servos_auto_trim(void)
 
     g2.servo_channels.adjust_trim(SRV_Channel::k_vtail_left,  pitch_I);
     g2.servo_channels.adjust_trim(SRV_Channel::k_vtail_right, pitch_I);
+
+    g2.servo_channels.adjust_trim(SRV_Channel::k_x_top_left, pitch_I - roll_I);
+    g2.servo_channels.adjust_trim(SRV_Channel::k_x_top_right, pitch_I + roll_I);
+    g2.servo_channels.adjust_trim(SRV_Channel::k_x_bottom_left, pitch_I - roll_I);
+    g2.servo_channels.adjust_trim(SRV_Channel::k_x_bottom_right, pitch_I + roll_I);
 
     g2.servo_channels.adjust_trim(SRV_Channel::k_flaperon_left,  roll_I);
     g2.servo_channels.adjust_trim(SRV_Channel::k_flaperon_right, roll_I);
