@@ -4,26 +4,34 @@
 bool ModeGuided::_enter()
 {
     plane.guided_throttle_passthru = false;
-    /*
-      when entering guided mode we set the target as the current
-      location. This matches the behaviour of the copter code
-    */
-    Location loc{plane.current_loc};
-
-#if HAL_QUADPLANE_ENABLED
-    if (plane.quadplane.guided_mode_enabled()) {
-        /*
-          if using Q_GUIDED_MODE then project forward by the stopping distance
-        */
-        loc.offset_bearing(degrees(ahrs.groundspeed_vector().angle()),
-                           plane.quadplane.stopping_distance_m());
-    }
-#endif
 
     // set guided radius to WP_LOITER_RAD on mode change.
     active_radius_m = 0;
 
-    plane.set_guided_WP(loc);
+    if (plane.have_position && plane.current_loc.initialised()) {
+        /*
+          when entering guided mode we set the target as the current
+          location. This matches the behaviour of the copter code
+        */
+        Location loc{plane.current_loc};
+
+#if HAL_QUADPLANE_ENABLED
+        if (plane.quadplane.guided_mode_enabled()) {
+            /*
+              if using Q_GUIDED_MODE then project forward by the stopping distance
+            */
+            loc.offset_bearing(degrees(ahrs.groundspeed_vector().angle()),
+                               plane.quadplane.stopping_distance_m());
+        }
+#endif
+        plane.set_guided_WP(loc);
+    } else {
+        // allow guided attitude/throttle control without a valid position estimate
+        plane.nav_roll_cd = 0;
+        plane.set_target_altitude_current();
+        GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Guided no GPS position");
+    }
+
     return true;
 }
 
@@ -71,6 +79,10 @@ void ModeGuided::update()
         plane.update_load_factor();
 
 #endif // AP_PLANE_OFFBOARD_GUIDED_SLEW_ENABLED
+    } else if (!plane.have_position || !plane.current_loc.initialised()) {
+        // no position estimate: keep wings level unless externally forced
+        plane.nav_roll_cd = 0;
+        plane.update_load_factor();
     } else {
         plane.calc_nav_roll();
     }
